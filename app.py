@@ -52,14 +52,15 @@ def normalize(series):
 def compute_scores(df):
     df = df.copy()
 
-    # Example assumptions (adjust to actual column names)
-   def safe_col(df, col):
-    return df[col] if col in df.columns else 0
+    def safe_col(df, col):
+        return df[col] if col in df.columns else 0
 
-df["revenue_trend"] = (
-    (safe_col(df, "mrr_current_gbp") - safe_col(df, "mrr_3_months_ago_gbp")) /
-    (safe_col(df, "mrr_3_months_ago_gbp") + 1)
-)
+    df["revenue_trend"] = (
+        (safe_col(df, "mrr_current_gbp") - safe_col(df, "mrr_3_months_ago_gbp")) /
+        (safe_col(df, "mrr_3_months_ago_gbp") + 1)
+    )
+
+    return df
     df["usage_trend"] = (df["usage_current"] - df["usage_previous"]) / (df["usage_previous"] + 1)
 
     df["support_score"] = normalize(df["open_tickets"] + df["sla_breaches"] * 2)
