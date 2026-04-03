@@ -25,7 +25,7 @@ if not st.session_state["logged_in"]:
     st.stop()
 
 # -----------------------------
-# Load Data
+# 📂 Load Data
 # -----------------------------
 @st.cache_data
 def load_data():
@@ -41,6 +41,7 @@ def get_column(df, col):
         return df[col]
     matches = difflib.get_close_matches(col, df.columns, n=1, cutoff=0.6)
     if matches:
+        st.warning(f"Using '{matches[0]}' instead of '{col}'")
         return df[matches[0]]
     return pd.Series(0, index=df.index)
 
@@ -50,8 +51,6 @@ def normalize(series):
 
 def safe_float(x):
     try:
-        if pd.isna(x):
-            return 0.0
         return float(x)
     except:
         return 0.0
@@ -60,7 +59,7 @@ def r(x):
     return round(safe_float(x), 2)
 
 # -----------------------------
-# Compute Scores
+# 🧮 Compute Scores
 # -----------------------------
 def compute_scores(df):
     df = df.copy()
@@ -123,14 +122,14 @@ def compute_scores(df):
 df = compute_scores(df)
 
 # -----------------------------
-# Normalize within segment
+# 📊 Normalize within segment
 # -----------------------------
 df["priority_score_norm"] = df.groupby("segment")["priority_score"].transform(
     lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9) * 100
 )
 
 # -----------------------------
-# Filters
+# 🎛 Filters
 # -----------------------------
 st.set_page_config(layout="wide")
 st.title("📊 Account Prioritisation Dashboard")
@@ -150,107 +149,87 @@ if industry != "All":
 df_sorted = df_filtered.sort_values(by="priority_score", ascending=False)
 
 # -----------------------------
-# BCG MATRIX (FIXED + INTERACTIVE)
+# 📊 Summary
+# -----------------------------
+st.subheader("📊 Portfolio Summary")
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric("Avg Priority", r(df_filtered["priority_score"].mean()))
+col2.metric("Avg Normalized", r(df_filtered["priority_score_norm"].mean()))
+col3.metric("High Priority Accounts", int((df_filtered["priority_score_norm"] > 70).sum()))
+
+# -----------------------------
+# 📊 BCG MATRIX (FIXED)
 # -----------------------------
 st.subheader("📊 Account Heatmap (BCG Matrix)")
 
-st.markdown("""
-**X-axis → Growth Score**  
-**Y-axis → Risk Score**
-""")
+width = 800
+height = 450
+padding = 40
 
 st.markdown(
-    "<div style='position:relative; height:450px; border:2px solid #ccc;'>",
+    f"""<div style="position:relative;width:{width}px;height:{height}px;border:2px solid #ccc;margin:auto;background:#fafafa;">""",
     unsafe_allow_html=True
 )
 
-selected_from_chart = None
+# Quadrant lines
+st.markdown(f"""
+<div style="position:absolute;left:50%;top:0;height:100%;width:2px;background:#ccc;"></div>
+<div style="position:absolute;top:50%;left:0;width:100%;height:2px;background:#ccc;"></div>
+""", unsafe_allow_html=True)
 
-for _, acc in df_sorted.iterrows():
+for _, acc in df_filtered.iterrows():
 
     x = safe_float(acc["growth_score"]) / 100
     y = safe_float(acc["risk_score"]) / 100
 
-    left = int(max(0, min(x, 1)) * 90)
-    bottom = int(max(0, min(y, 1)) * 90)
-
-    # Quadrant color
-    if x > 0.5 and y > 0.5:
-        color = "#2ecc71"
-        label = "Stable Growth"
-    elif x <= 0.5 and y > 0.5:
-        color = "#e74c3c"
-        label = "At Risk"
-    elif x > 0.5 and y <= 0.5:
-        color = "#f1c40f"
-        label = "Emerging"
-    else:
-        color = "#95a5a6"
-        label = "Low Priority"
+    px = padding + x * (width - 2 * padding)
+    py = padding + y * (height - 2 * padding)
 
     size = max(12, min(int(safe_float(acc["arr_gbp"]) / 1e6), 40))
 
-    tooltip = f"""
-    {acc['account_name']}
-    Priority: {r(acc['priority_score'])}
-    Growth: {r(acc['growth_score'])}
-    Risk: {r(acc['risk_score'])}
-    ARR: {int(safe_float(acc['arr_gbp']))}
-    Segment: {acc.get('segment')}
-    """
+    px = max(size, min(px, width - size))
+    py = max(size, min(py, height - size))
+
+    if x > 0.5 and y > 0.5:
+        color = "#2ecc71"
+    elif x <= 0.5 and y > 0.5:
+        color = "#e74c3c"
+    elif x > 0.5 and y <= 0.5:
+        color = "#f1c40f"
+    else:
+        color = "#95a5a6"
+
+    tooltip = f"{acc['account_name']} | Priority: {r(acc['priority_score'])}"
 
     st.markdown(
         f"""
         <div title="{tooltip}"
-        onclick="window.parent.postMessage({{'account':'{acc['account_name']}'}} , '*')"
-        style="
-            position:absolute;
-            left:{left}%;
-            bottom:{bottom}%;
-            width:{size}px;
-            height:{size}px;
-            background:{color};
-            border-radius:50%;
-            opacity:0.75;
-            cursor:pointer;">
+        style="position:absolute;left:{px}px;bottom:{py}px;width:{size}px;height:{size}px;background:{color};border-radius:50%;opacity:0.7;">
         </div>
         """,
         unsafe_allow_html=True
     )
 
-# Axis labels
-st.markdown("""
-<div style='position:absolute; left:5px; bottom:5px;'>Low Growth</div>
-<div style='position:absolute; right:5px; bottom:5px;'>High Growth</div>
-<div style='position:absolute; left:5px; top:5px;'>High Risk</div>
-<div style='position:absolute; left:5px; bottom:50%; transform:rotate(-90deg);'>Risk ↑</div>
-""", unsafe_allow_html=True)
-
 st.markdown("</div>", unsafe_allow_html=True)
 
 # -----------------------------
-# Drill Down (Selectable)
+# 🔍 Drill Down
 # -----------------------------
 st.subheader("🔍 Drill into Account")
 
-selected_account = st.selectbox(
-    "Select Account",
-    df_sorted["account_name"]
-)
-
+selected_account = st.selectbox("Select Account", df_sorted["account_name"])
 account = df_sorted[df_sorted["account_name"] == selected_account].iloc[0]
 
-# Executive Overview
 st.markdown(f"""
 ### 📌 Account Overview
 - **Region:** {account.get('region')}
 - **Segment:** {account.get('segment')}
 - **Industry:** {account.get('industry')}
-- **Owner:** {account.get('account_owner')}
 - **ARR:** £{r(account.get('arr_gbp'))}
 """)
 
-# Metrics
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Priority", r(account["priority_score"]))
 col2.metric("Risk", r(account["risk_score"]))
