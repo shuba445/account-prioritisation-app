@@ -3,7 +3,8 @@ import pandas as pd
 import numpy as np
 import difflib
 import os
-import plotly.express as px
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # -----------------------------
 # 🔐 Simple Authentication
@@ -37,7 +38,7 @@ df = load_data()
 st.write("Columns detected in dataset:", df.columns.tolist())
 
 # -----------------------------
-# Helper: get column with fallback
+# Helper: map similar columns
 # -----------------------------
 def get_column(df, expected_col):
     if expected_col in df.columns:
@@ -48,6 +49,7 @@ def get_column(df, expected_col):
             st.warning(f"Column '{expected_col}' not found. Using '{matches[0]}' instead.")
             return df[matches[0]]
         else:
+            st.warning(f"Column '{expected_col}' not found. Using default 0.")
             return pd.Series(0, index=df.index)
 
 # -----------------------------
@@ -78,7 +80,7 @@ def compute_scores(df):
     # Growth Score
     df["growth_score"] = (
         normalize(get_column(df,"expansion_pipeline_gbp"))*0.4 +
-        normalize(get_column(df,"seats_used"))*0.2 +
+        normalize(get_column(df,"seats_used") / (get_column(df,"seats_purchased")+1e-9))*0.2 +
         normalize(df["usage_trend"])*0.2 +
         normalize(get_column(df,"open_leads_count"))*0.2
     ) * 100
@@ -86,7 +88,7 @@ def compute_scores(df):
     # Engagement / Attention Score
     df["attention_score"] = (
         normalize(get_column(df,"arr_gbp"))*0.4 +
-        normalize(get_column(df,"latest_note_date"))*0.3 +
+        normalize(pd.to_datetime("today") - pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')).dt.days.fillna(0)*0.3 +
         df["support_score"]*0.3
     ) * 100
 
@@ -97,17 +99,11 @@ def compute_scores(df):
 
     return df
 
+# -----------------------------
+# Load & compute data
+# -----------------------------
 df = compute_scores(df)
-
-# -----------------------------
-# Filters
-# -----------------------------
-st.sidebar.header("Filters")
-selected_segments = st.sidebar.multiselect("Segment", df["segment"].unique(), default=df["segment"].unique())
-selected_regions = st.sidebar.multiselect("Region", df["region"].unique(), default=df["region"].unique())
-
-filtered_df = df[(df["segment"].isin(selected_segments)) & (df["region"].isin(selected_regions))]
-df_sorted = filtered_df.sort_values(by="priority_score", ascending=False)
+df_sorted = df.sort_values(by="priority_score", ascending=False)
 
 # -----------------------------
 # Streamlit UI
@@ -126,12 +122,27 @@ for i, (_, acc) in enumerate(top_accounts.iterrows()):
 
 st.markdown("---")
 
+# -----------------------------
+# Segment & Region Filters
+# -----------------------------
+st.sidebar.subheader("Filter Accounts")
+segments = df_sorted['segment'].dropna().unique().tolist()
+regions = df_sorted['region'].dropna().unique().tolist()
+
+selected_segments = st.sidebar.multiselect("Segment", options=segments, default=segments)
+selected_regions = st.sidebar.multiselect("Region", options=regions, default=regions)
+
+filtered_df = df_sorted[
+    (df_sorted['segment'].isin(selected_segments)) &
+    (df_sorted['region'].isin(selected_regions))
+]
+
+# -----------------------------
 # Portfolio Table
+# -----------------------------
 st.subheader("📈 Portfolio Overview")
-st.dataframe(df_sorted[[
+st.dataframe(filtered_df[[
     "account_name",
-    "segment",
-    "region",
     "priority_score",
     "risk_score",
     "growth_score",
@@ -139,58 +150,55 @@ st.dataframe(df_sorted[[
 ]], use_container_width=True)
 
 # -----------------------------
-# BCG-style Heatmap
+# BCG-style Account Matrix
 # -----------------------------
 st.subheader("📊 BCG-style Account Matrix")
-fig = px.scatter(
-    df_sorted,
+fig, ax = plt.subplots(figsize=(8,6))
+sns.scatterplot(
+    data=filtered_df,
     x="growth_score",
     y="priority_score",
+    hue="segment",
+    style="region",
     size="attention_score",
-    color="segment",
-    hover_name="account_name",
-    hover_data={
-        "risk_score": True,
-        "growth_score": True,
-        "attention_score": True,
-        "region": True
-    },
-    title="BCG-style Account Matrix"
+    sizes=(50, 300),
+    palette="tab10",
+    alpha=0.7,
+    ax=ax,
+    legend="full"
 )
-fig.add_shape(type="line", x0=50, y0=0, x1=50, y1=100, line=dict(dash="dash", color="gray"))
-fig.add_shape(type="line", x0=0, y0=50, x1=100, y1=50, line=dict(dash="dash", color="gray"))
-st.plotly_chart(fig, use_container_width=True)
+ax.axhline(50, color='gray', linestyle='--')
+ax.axvline(50, color='gray', linestyle='--')
+ax.set_xlabel("Growth Score")
+ax.set_ylabel("Priority Score")
+ax.set_title("BCG-style Account Matrix")
+ax.grid(True)
+st.pyplot(fig)
+
+st.markdown("""
+**Quadrants:**  
+- **Top Right:** Emerging / High growth & High priority  
+- **Top Left:** Stable Growth / Low priority & High growth  
+- **Bottom Right:** Accounts under Threat / High priority & Low growth  
+- **Bottom Left:** Low Focus / Low priority & Low growth
+""")
 
 # -----------------------------
 # Drill Down Section
 # -----------------------------
 st.subheader("🔍 Drill into an Account")
-selected_account = st.selectbox("Select Account", df_sorted["account_name"])
-account_row = df_sorted[df_sorted["account_name"] == selected_account]
+selected_account = st.selectbox("Select Account", filtered_df["account_name"])
+account_row = filtered_df[filtered_df["account_name"] == selected_account]
 
 if not account_row.empty:
     account = account_row.iloc[0]
 
-    # Executive Account Info
-    st.subheader("🏢 Executive Account Overview")
-    st.write({
-        "Account Name": account.get("account_name", ""),
-        "Segment": account.get("segment", ""),
-        "Region": account.get("region", ""),
-        "Account Owner": account.get("account_owner",""),
-        "CSM Owner": account.get("csm_owner",""),
-        "Account Status": account.get("account_status",""),
-        "ARR": account.get("arr_gbp",0),
-        "Seats Purchased": account.get("seats_purchased",0),
-        "Seats Used": account.get("seats_used",0),
-    })
-
-    # Metrics display
+    # Executive Overview Metrics
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Priority", f"{account.get('priority_score',0):.1f}", help="Composite score combining risk, growth, and attention.")
-    col2.metric("Risk", f"{account.get('risk_score',0):.1f}", help="Higher score indicates higher risk or potential churn.")
-    col3.metric("Growth", f"{account.get('growth_score',0):.1f}", help="Higher score indicates growth opportunities.")
-    col4.metric("Engagement", f"{account.get('attention_score',0):.1f}", help="Accounts needing attention based on interactions and support.")
+    col1.metric("Priority Score", f"{account.get('priority_score',0):.1f}")
+    col2.metric("Risk Score", f"{account.get('risk_score',0):.1f}")
+    col3.metric("Growth Score", f"{account.get('growth_score',0):.1f}")
+    col4.metric("Engagement Score", f"{account.get('attention_score',0):.1f}")
 
     # Supporting Evidence Table
     st.subheader("🧠 Supporting Evidence")
@@ -203,13 +211,14 @@ if not account_row.empty:
             "latest_nps",
             "expansion_pipeline_gbp",
             "seats_used",
+            "seats_purchased",
             "open_leads_count",
-            "latest_note_date",
-            "arr_gbp"
+            "arr_gbp",
+            "latest_note_date"
         ]
         evidence_data = {
-            "Metric": [m.replace("_", " ").title() for m in metrics_list],
-            "Value": [account.get(m, 0) for m in metrics_list]
+            "Metric": [m.replace("_"," ").title() for m in metrics_list],
+            "Value": [account.get(m,0) for m in metrics_list]
         }
         st.table(pd.DataFrame(evidence_data))
 
@@ -220,10 +229,11 @@ if not account_row.empty:
     if account.get("support_score",0) > 0.5: actions.append("🛠 Resolve support issues")
     if account.get("growth_score",0) > 50: actions.append("📈 Explore upsell opportunities")
     if not actions: actions.append("👀 Monitor account")
+
     for a in actions:
         st.write(f"- {a}")
 
-    # Save / Record Decisions
+    # Notes / Save Decisions
     st.subheader("💾 Record Your Decision / Notes")
     notes_key = f"notes_{selected_account}"
     notes = st.text_area("Add your notes or decisions for this account", key=notes_key)
@@ -234,10 +244,11 @@ if not account_row.empty:
         else:
             notes_df = pd.DataFrame(columns=["account_name", "notes"])
         if selected_account in notes_df["account_name"].values:
-            notes_df.loc[notes_df["account_name"]==selected_account, "notes"] = notes
+            notes_df.loc[notes_df["account_name"]==selected_account,"notes"] = notes
         else:
-            notes_df = pd.concat([notes_df, pd.DataFrame([{"account_name": selected_account, "notes": notes}])], ignore_index=True)
-        notes_df.to_csv(file_name, index=False)
+            notes_df = pd.concat([notes_df,pd.DataFrame([{"account_name":selected_account,"notes":notes}])],ignore_index=True)
+        notes_df.to_csv(file_name,index=False)
         st.success("Notes saved successfully!")
+
 else:
     st.warning(f"No data found for account '{selected_account}'.")
