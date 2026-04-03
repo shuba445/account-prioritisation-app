@@ -36,7 +36,7 @@ df = load_data()
 st.write("Columns detected in dataset:", df.columns.tolist())
 
 # -----------------------------
-# Helper: map similar columns
+# Helper: get column with fallback
 # -----------------------------
 def get_column(df, expected_col):
     if expected_col in df.columns:
@@ -58,51 +58,58 @@ def normalize(series):
 
 def compute_scores(df):
     df = df.copy()
-
-    # Revenue & usage trends
+    
     df["revenue_trend"] = (get_column(df,"mrr_current_gbp") - get_column(df,"mrr_3m_ago_gbp")) / (get_column(df,"mrr_3m_ago_gbp")+1)
     df["usage_trend"] = (get_column(df,"usage_score_current") - get_column(df,"usage_score_3m_ago")) / (get_column(df,"usage_score_3m_ago")+1)
-
-    # Support & NPS
+    
     df["support_score"] = normalize(get_column(df,"open_tickets_count") + get_column(df,"sla_breaches_90d")*2)
     df["nps_score"] = 1 - normalize(get_column(df,"latest_nps"))
-
-    # Risk Score
+    
+    df["positive_sales_signal"] = normalize(get_column(df,"open_leads_count") + get_column(df,"avg_lead_score"))
+    df["days_since_last_contact"] = (pd.to_datetime("today") - pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')).dt.days.fillna(0)
+    
     df["risk_score"] = (
         normalize(-df["revenue_trend"])*0.25 +
         normalize(-df["usage_trend"])*0.25 +
         df["support_score"]*0.25 +
         df["nps_score"]*0.25
     ) * 100
-
-    # Growth Score
+    
     df["growth_score"] = (
         normalize(get_column(df,"expansion_pipeline_gbp"))*0.4 +
         normalize(get_column(df,"seats_used"))*0.2 +
         normalize(df["usage_trend"])*0.2 +
-        normalize(get_column(df,"open_leads_count"))*0.2
+        normalize(df["positive_sales_signal"])*0.2
     ) * 100
-
-    # Attention / Engagement Score
-    days_since_last_note = (pd.to_datetime("today") - pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')).dt.days.fillna(0)
+    
     df["attention_score"] = (
         normalize(get_column(df,"arr_gbp"))*0.4 +
-        normalize(days_since_last_note)*0.3 +
+        normalize(df["days_since_last_contact"])*0.3 +
         df["support_score"]*0.3
     ) * 100
-
-    # Priority Score
+    
     df["metric1"] = df.get("risk_score",0)
     df["metric2"] = df.get("growth_score",0)
     df["priority_score"] = df["metric1"]*0.5 + df["metric2"]*0.5 + df.get("attention_score",0)*0.2
-
+    
     return df
 
 df = compute_scores(df)
-df_sorted = df.sort_values(by="priority_score", ascending=False)
 
 # -----------------------------
-# Streamlit UI
+# Segment-normalized score
+# -----------------------------
+def normalize_within_segment(df, score_col="priority_score"):
+    df = df.copy()
+    df[f"{score_col}_norm"] = df.groupby("segment")[score_col].transform(
+        lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9) * 100
+    )
+    return df
+
+df = normalize_within_segment(df, "priority_score")
+
+# -----------------------------
+# Streamlit UI Setup
 # -----------------------------
 st.set_page_config(page_title="Account Prioritisation", layout="wide")
 st.title("📊 Account Prioritisation Dashboard")
@@ -110,124 +117,117 @@ st.title("📊 Account Prioritisation Dashboard")
 # -----------------------------
 # Filters
 # -----------------------------
-st.sidebar.subheader("Filters")
-segments = st.sidebar.multiselect("Select Segment", options=df["segment"].unique(), default=df["segment"].unique())
-regions = st.sidebar.multiselect("Select Region", options=df["region"].unique(), default=df["region"].unique())
-df_filtered = df_sorted[(df_sorted["segment"].isin(segments)) & (df_sorted["region"].isin(regions))]
+segments = df["segment"].unique()
+regions = df["region"].unique()
+industries = df["industry"].unique()
+
+selected_segment = st.selectbox("Filter by Segment", ["All"]+list(segments))
+selected_region = st.selectbox("Filter by Region", ["All"]+list(regions))
+selected_industry = st.selectbox("Filter by Industry", ["All"]+list(industries))
+
+df_filtered = df.copy()
+if selected_segment != "All":
+    df_filtered = df_filtered[df_filtered["segment"]==selected_segment]
+if selected_region != "All":
+    df_filtered = df_filtered[df_filtered["region"]==selected_region]
+if selected_industry != "All":
+    df_filtered = df_filtered[df_filtered["industry"]==selected_industry]
+
+df_sorted = df_filtered.sort_values(by="priority_score", ascending=False)
 
 # -----------------------------
-# Portfolio Overview
+# Top Accounts Cards
+# -----------------------------
+st.subheader("🏆 Top Accounts")
+top_accounts = df_sorted.head(5)
+cols = st.columns(min(5, len(top_accounts)))
+for i, (_, acc) in enumerate(top_accounts.iterrows()):
+    with cols[i % 5]:
+        st.metric(label=acc.get("account_name","N/A"), value=f"{acc.get('priority_score',0):.1f}")
+        st.progress(min(acc.get('priority_score',0)/100,1.0))
+
+st.markdown("---")
+
+# -----------------------------
+# Portfolio Overview Table
 # -----------------------------
 st.subheader("📈 Portfolio Overview")
-st.dataframe(df_filtered[[
+st.dataframe(df_sorted[[
     "account_name",
+    "segment",
+    "region",
+    "industry",
     "priority_score",
+    "priority_score_norm",
     "risk_score",
     "growth_score",
     "attention_score"
 ]], use_container_width=True)
 
-# Score explanations
-st.caption("💡 Hover explanations:")
-score_explanations = {
-    "priority_score": "Overall priority based on risk, growth, and engagement/attention",
-    "risk_score": "Higher score = higher risk of churn",
-    "growth_score": "Higher score = higher growth potential",
-    "attention_score": "Higher score = needs more engagement or attention"
-}
-for score, desc in score_explanations.items():
-    st.write(f"**{score.replace('_',' ').title()}**: {desc}")
-
-# -----------------------------
-# BCG-style Heatmap (Native Streamlit)
-# -----------------------------
-st.subheader("📊 Account Heatmap (BCG-style)")
-
-growth_mid = df_filtered["growth_score"].median()
-risk_mid = df_filtered["risk_score"].median()
-
-quadrants = {
-    "Emerging": (df_filtered["growth_score"]>=growth_mid) & (df_filtered["risk_score"]<risk_mid),
-    "Stable Growth": (df_filtered["growth_score"]>=growth_mid) & (df_filtered["risk_score"]>=risk_mid),
-    "Under Threat": (df_filtered["growth_score"]<growth_mid) & (df_filtered["risk_score"]>=risk_mid),
-    "Less Focus / Drop": (df_filtered["growth_score"]<growth_mid) & (df_filtered["risk_score"]<risk_mid)
-}
-
-# Color code for quadrants
-quad_colors = {
-    "Emerging": "#FFA500",        # Orange
-    "Stable Growth": "#00CC96",   # Green
-    "Under Threat": "#FF4C4C",    # Red
-    "Less Focus / Drop": "#A9A9A9" # Grey
-}
-
-for quadrant_name, condition in quadrants.items():
-    accounts_in_quad = df_filtered[condition]
-    st.markdown(f"### {quadrant_name} Accounts ({len(accounts_in_quad)})")
-    if not accounts_in_quad.empty:
-        cols = st.columns(min(4,len(accounts_in_quad)))
-        for i, (_, acc) in enumerate(accounts_in_quad.iterrows()):
-            with cols[i % 4]:
-                # Circle size proportional to priority_score
-                size = max(30, min(100, acc["priority_score"]))
-                color = quad_colors[quadrant_name]
-                st.markdown(f"""
-                    <div style='text-align:center;'>
-                        <div style='width:{size}px;height:{size}px;background-color:{color};
-                        border-radius:50%;display:inline-block;margin:5px;'></div>
-                        <div>{acc['account_name']}</div>
-                        <div>P:{acc['priority_score']:.1f}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-    else:
-        st.write("No accounts in this quadrant.")
-
 # -----------------------------
 # Drill Down Section
 # -----------------------------
 st.subheader("🔍 Drill into an Account")
-selected_account = st.selectbox("Select Account", df_filtered["account_name"])
-account_row = df_filtered[df_filtered["account_name"] == selected_account]
+selected_account = st.selectbox("Select Account", df_sorted["account_name"])
+account_row = df_sorted[df_sorted["account_name"]==selected_account]
 
 if not account_row.empty:
     account = account_row.iloc[0]
-
+    
     # Executive Account Info
-    st.markdown(f"**Account Overview:** {account.get('account_name','N/A')} | Segment: {account.get('segment','N/A')} | Region: {account.get('region','N/A')}")
+    st.markdown(f"""
+    **Region:** {account.get('region','N/A')} | **Segment:** {account.get('segment','N/A')} | **Industry:** {account.get('industry','N/A')}  
+    **Account Status:** {account.get('account_status','N/A')} | **Lifecycle Stage:** {account.get('lifecycle_stage','N/A')} | **Account Owner:** {account.get('account_owner','N/A')} | **CSM Owner:** {account.get('csm_owner','N/A')}  
+    **Support Tier:** {account.get('support_tier','N/A')} | **Contract Start:** {account.get('contract_start_date','N/A')} | **Renewal Date:** {account.get('renewal_date','N/A')}  
+    **ARR:** {account.get('arr_gbp',0):,.0f} | **Seats Purchased:** {account.get('seats_purchased',0)} | **Seats Used:** {account.get('seats_used',0)}  
+    **Latest NPS:** {account.get('latest_nps',0)} | **Expansion Pipeline:** {account.get('expansion_pipeline_gbp',0):,.0f} | **Contraction Risk:** {account.get('contraction_risk_gbp',0):,.0f}  
+    **Last QBR Date:** {account.get('last_qbr_date','N/A')} | **Latest Note Date:** {account.get('latest_note_date','N/A')} | **Note Sentiment Hint:** {account.get('note_sentiment_hint','N/A')}
+    """)
+    
+    # Metrics display
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Priority", f"{account.get('priority_score',0):.1f}")
     col2.metric("Risk", f"{account.get('risk_score',0):.1f}")
     col3.metric("Growth", f"{account.get('growth_score',0):.1f}")
     col4.metric("Engagement", f"{account.get('attention_score',0):.1f}")
-
+    
     # Supporting Evidence Table
     st.subheader("🧠 Supporting Evidence")
     with st.expander("View reasoning and supporting metrics"):
         metrics_list = [
-            "revenue_trend","usage_trend","open_tickets_count","sla_breaches_90d",
-            "latest_nps","expansion_pipeline_gbp","seats_used","open_leads_count",
-            "arr_gbp","latest_note_date"
+            "revenue_trend",
+            "usage_trend",
+            "open_tickets_count",
+            "sla_breaches_90d",
+            "latest_nps",
+            "expansion_pipeline_gbp",
+            "seats_used",
+            "positive_sales_signal",
+            "days_since_last_contact",
+            "arr_gbp",
+            "recent_support_summary",
+            "recent_customer_note",
+            "recent_sales_note"
         ]
         evidence_data = {
             "Metric": [m.replace("_"," ").title() for m in metrics_list],
             "Value": [account.get(m,0) for m in metrics_list]
         }
         st.table(pd.DataFrame(evidence_data))
-
+    
     # Recommended Actions
     st.subheader("✅ Recommended Actions")
-    actions = []
-    if account.get("risk_score",0) > 60: actions.append("🚨 Immediate customer outreach")
-    if account.get("support_score",0) > 0.5: actions.append("🛠 Resolve support issues")
-    if account.get("growth_score",0) > 50: actions.append("📈 Explore upsell opportunities")
+    actions=[]
+    if account.get("risk_score",0)>60: actions.append("🚨 Immediate customer outreach")
+    if account.get("support_score",0)>0.5: actions.append("🛠 Resolve support issues")
+    if account.get("growth_score",0)>50: actions.append("📈 Explore upsell opportunities")
     if not actions: actions.append("👀 Monitor account")
-    for a in actions:
-        st.write(f"- {a}")
-
-    # Save / Record Decisions
+    for a in actions: st.write(f"- {a}")
+    
+    # Save Notes
     st.subheader("💾 Record Your Decision / Notes")
     notes_key = f"notes_{selected_account}"
-    notes = st.text_area("Add your notes or decisions for this account", key=notes_key)
+    notes = st.text_area("Add notes or decisions for this account", key=notes_key)
     if st.button("Save Notes"):
         file_name = "account_notes.csv"
         if os.path.exists(file_name):
@@ -235,7 +235,7 @@ if not account_row.empty:
         else:
             notes_df = pd.DataFrame(columns=["account_name","notes"])
         if selected_account in notes_df["account_name"].values:
-            notes_df.loc[notes_df["account_name"]==selected_account,"notes"] = notes
+            notes_df.loc[notes_df["account_name"]==selected_account,"notes"]=notes
         else:
             notes_df = pd.concat([notes_df,pd.DataFrame([{"account_name":selected_account,"notes":notes}])],ignore_index=True)
         notes_df.to_csv(file_name,index=False)
