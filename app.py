@@ -83,11 +83,11 @@ def compute_scores(df):
 
     # Engagement / Attention Score
     df["attention_score"] = (
-        normalize(get_column(df,"arr_gbp"))*0.4 +
-        normalize(pd.to_datetime("today") - pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')).dt.days.fillna(0)*0.3 +
-        df["support_score"]*0.3
+    normalize(get_column(df,"arr_gbp"))*0.4 +
+    days_since_last_note_norm*0.3 +
+    df["support_score"]*0.3
     ) * 100
-
+    
     # Priority Score
     df["metric1"] = df.get("risk_score",0)
     df["metric2"] = df.get("growth_score",0)
