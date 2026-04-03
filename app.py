@@ -54,12 +54,12 @@ def compute_scores(df):
     df = df.copy()
     
     # Revenue & Usage
-    df["revenue_trend"] = (get_column(df,"mrr_current_gbp") - get_column(df,"mrr_3_months_ago_gbp")) / (get_column(df,"mrr_3_months_ago_gbp")+1)
-    df["usage_trend"] = (get_column(df,"usage_current") - get_column(df,"usage_previous")) / (get_column(df,"usage_previous")+1)
+    df["revenue_trend"] = (get_column(df,"mrr_current_gbp") - get_column(df,"mrr_3m_ago_gbp")) / (get_column(df,"mrr_3m_ago_gbp")+1)
+    df["usage_trend"] = (get_column(df,"usage_score_current") - get_column(df,"usage_score_3m_ago")) / (get_column(df,"usage_score_3m_ago")+1)
     
     # Support & NPS
-    df["support_score"] = normalize(get_column(df,"open_tickets") + get_column(df,"sla_breaches")*2)
-    df["nps_score"] = 1 - normalize(get_column(df,"nps"))
+    df["support_score"] = normalize(get_column(df,"open_tickets_count") + get_column(df,"sla_breaches_90d")*2)
+    df["nps_score"] = 1 - normalize(get_column(df,"latest_nps"))
     
     # Risk Score
     df["risk_score"] = (
@@ -69,9 +69,23 @@ def compute_scores(df):
         df["nps_score"]*0.25
     ) * 100
     
+    # --- Seat utilisation calculation ---
+    if "seat_utilisation" not in df.columns:
+        df["seat_utilisation"] = get_column(df,"active_seats") / (get_column(df,"purchased_seats") + 1e-9)
+
+    # --- Positive sales signal ---
+    df["positive_sales_signal"] = 0
+        expansion = get_column(df, "expansion_pipeline")
+        df.loc[expansion > 0, "positive_sales_signal"] = 1
+        df.loc[df.get("seat_utilisation", 0) > 0.8, "positive_sales_signal"] = 1
+    
+    # Days since last contact (fallback using latest sales note)
+    df["latest_note_date"] = pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')
+    df["days_since_last_contact"] = (pd.Timestamp.today() - df["latest_note_date"]).dt.days.fillna(30)
+
     # Growth Score
     df["growth_score"] = (
-        normalize(get_column(df,"expansion_pipeline"))*0.4 +
+        normalize(get_column(df,"expansion_pipeline_gbp"))*0.4 +
         normalize(get_column(df,"seat_utilisation"))*0.2 +
         normalize(df["usage_trend"])*0.2 +
         normalize(get_column(df,"positive_sales_signal"))*0.2
@@ -79,7 +93,7 @@ def compute_scores(df):
     
     # Engagement/Attention
     df["attention_score"] = (
-        normalize(get_column(df,"arr"))*0.4 +
+        normalize(get_column(df,"arr_gbp"))*0.4 +
         normalize(get_column(df,"days_since_last_contact"))*0.3 +
         df["support_score"]*0.3
     ) * 100
@@ -138,9 +152,9 @@ if not account_row.empty:
     st.subheader("🧠 Supporting Evidence")
     with st.expander("View reasoning and supporting metrics"):
         metrics_list = [
-            "revenue_trend","usage_trend","open_tickets","sla_breaches","nps",
-            "expansion_pipeline","seat_utilisation","positive_sales_signal",
-            "days_since_last_contact","arr"
+            "revenue_trend","usage_trend","open_tickets_count","sla_breaches_90d","nps",
+            "expansion_pipeline_gbp","seat_utilisation","positive_sales_signal",
+            "days_since_last_contact","arr_gbp"
         ]
         evidence_data = {
             "Metric": [m.replace("_"," ").title() for m in metrics_list],
