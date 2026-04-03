@@ -53,7 +53,10 @@ def compute_scores(df):
     df = df.copy()
 
     # Example assumptions (adjust to actual column names)
-    df["revenue_trend"] = (df["mrr_current"] - df["mrr_previous"]) / (df["mrr_previous"] + 1)
+    df["revenue_trend"] = (
+    (df["mrr_current_gbp"] - df["mrr_previous_gbp"]) /
+    (df["mrr_previous_gbp"] + 1)
+)
     df["usage_trend"] = (df["usage_current"] - df["usage_previous"]) / (df["usage_previous"] + 1)
 
     df["support_score"] = normalize(df["open_tickets"] + df["sla_breaches"] * 2)
