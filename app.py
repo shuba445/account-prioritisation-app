@@ -122,11 +122,26 @@ def compute_scores(df):
 df = compute_scores(df)
 
 # -----------------------------
-# 📊 Normalize within segment
+# Normalize within segment
 # -----------------------------
 df["priority_score_norm"] = df.groupby("segment")["priority_score"].transform(
     lambda x: (x - x.min()) / (x.max() - x.min() + 1e-9) * 100
 )
+
+# -----------------------------
+# Categorisation
+# -----------------------------
+def categorize(score):
+    if score >= 75:
+        return "High Priority"
+    elif score >= 50:
+        return "Growth Focus"
+    elif score >= 30:
+        return "Watchlist"
+    else:
+        return "Low Priority"
+
+df["category"] = df["priority_score_norm"].apply(categorize)
 
 # -----------------------------
 # 🎛 Filters
@@ -160,66 +175,52 @@ col2.metric("Avg Normalized", r(df_filtered["priority_score_norm"].mean()))
 col3.metric("High Priority Accounts", int((df_filtered["priority_score_norm"] > 70).sum()))
 
 # -----------------------------
-# 🏆 Top Accounts
+# 🏆 Category Blocks (Top 3 each)
 # -----------------------------
-st.subheader("🏆 Top Priority Accounts")
+st.subheader("🏆 Top Accounts by Category")
 
-for _, acc in df_sorted.head(10).iterrows():
+categories = ["High Priority", "Growth Focus", "Watchlist", "Low Priority"]
 
-    score = acc["priority_score_norm"]
+colors = {
+    "High Priority": "#2ecc71",
+    "Growth Focus": "#f1c40f",
+    "Watchlist": "#e67e22",
+    "Low Priority": "#95a5a6"
+}
 
-    if score >= 75:
-        color = "#2ecc71"
-        label = "🚀 High Priority"
-    elif score >= 50:
-        color = "#f1c40f"
-        label = "📈 Growth Focus"
-    elif score >= 30:
-        color = "#e67e22"
-        label = "⚠️ Watchlist"
-    else:
-        color = "#95a5a6"
-        label = "❌ Low Priority"
+for cat in categories:
+    st.markdown(f"### {cat}")
 
-    col1, col2 = st.columns([1, 4])
+    cat_df = df_sorted[df_sorted["category"] == cat].head(3)
 
-    with col1:
-        st.markdown(f"<div style='width:50px;height:50px;background:{color};border-radius:50%;'></div>", unsafe_allow_html=True)
+    if cat_df.empty:
+        st.write("No accounts in this category")
+        continue
 
-    with col2:
-        st.markdown(f"""
-        **{acc['account_name']}**  
-        {label}  
-        Priority: **{r(acc['priority_score'])}** | Normalized: **{r(score)}**  
-        ARR: **£{int(acc.get('arr_gbp',0))}**
-        """)
+    cols = st.columns(3)
 
-# -----------------------------
-# 🔵 Bubble Portfolio View
-# -----------------------------
-st.subheader("🔵 Portfolio Bubble View")
+    for i, (_, acc) in enumerate(cat_df.iterrows()):
+        with cols[i]:
+            size = max(50, min(int(acc.get("arr_gbp",0)/1e6), 100))
 
-cols = st.columns(5)
-
-for i, (_, acc) in enumerate(df_sorted.head(20).iterrows()):
-
-    score = acc["priority_score_norm"]
-
-    if score >= 75:
-        color = "#2ecc71"
-    elif score >= 50:
-        color = "#f1c40f"
-    elif score >= 30:
-        color = "#e67e22"
-    else:
-        color = "#95a5a6"
-
-    size = max(40, min(int(acc.get("arr_gbp",0) / 1e6), 100))
-
-    with cols[i % 5]:
-        st.markdown(f"<div style='width:{size}px;height:{size}px;background:{color};border-radius:50%;margin:auto;'></div>", unsafe_allow_html=True)
-        st.caption(acc["account_name"])
-        st.caption(f"Score: {r(score)}")
+            st.markdown(
+                f"""
+                <div style="text-align:center;">
+                    <div style="
+                        width:{size}px;
+                        height:{size}px;
+                        background:{colors[cat]};
+                        border-radius:50%;
+                        margin:auto;">
+                    </div>
+                    <br>
+                    <b>{acc['account_name']}</b><br>
+                    Score: {r(acc['priority_score_norm'])}<br>
+                    ARR: £{int(acc.get('arr_gbp',0))}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
 # -----------------------------
 # 🔍 Drill Down
@@ -243,17 +244,20 @@ col2.metric("Risk", r(account["risk_score"]))
 col3.metric("Growth", r(account["growth_score"]))
 col4.metric("Engagement", r(account["attention_score"]))
 
-# Evidence
+# Supporting Evidence
 st.subheader("🧠 Supporting Evidence")
 
+metrics_list = [
+    "revenue_trend",
+    "usage_trend",
+    "open_tickets_count",
+    "sla_breaches_90d",
+    "latest_nps"
+]
+
 evidence = pd.DataFrame({
-    "Metric": ["Revenue Trend","Usage Trend","Open Tickets","NPS"],
-    "Value": [
-        r(account["revenue_trend"]),
-        r(account["usage_trend"]),
-        r(account.get("open_tickets_count",0)),
-        r(account.get("latest_nps",0))
-    ]
+    "Metric": [m.replace("_"," ").title() for m in metrics_list],
+    "Value": [r(account.get(m,0)) for m in metrics_list]
 })
 
 st.table(evidence)
