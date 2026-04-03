@@ -113,7 +113,7 @@ def compute_scores(df):
 
     df["priority_score"] = (
         df["risk_score"]*0.5 +
-        df["growth_score"]*0.5 +
+        df["growth_score"]*0.3 +
         df["attention_score"]*0.2
     )
 
