@@ -33,7 +33,6 @@ def load_data():
     return df
 
 df = load_data()
-st.write("Columns detected in dataset:", df.columns.tolist())
 
 # -----------------------------
 # Helper: get column with fallback
@@ -58,13 +57,11 @@ def normalize(series):
 
 def compute_scores(df):
     df = df.copy()
-    
     df["revenue_trend"] = (get_column(df,"mrr_current_gbp") - get_column(df,"mrr_3m_ago_gbp")) / (get_column(df,"mrr_3m_ago_gbp")+1)
     df["usage_trend"] = (get_column(df,"usage_score_current") - get_column(df,"usage_score_3m_ago")) / (get_column(df,"usage_score_3m_ago")+1)
     
     df["support_score"] = normalize(get_column(df,"open_tickets_count") + get_column(df,"sla_breaches_90d")*2)
     df["nps_score"] = 1 - normalize(get_column(df,"latest_nps"))
-    
     df["positive_sales_signal"] = normalize(get_column(df,"open_leads_count") + get_column(df,"avg_lead_score"))
     df["days_since_last_contact"] = (pd.to_datetime("today") - pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')).dt.days.fillna(0)
     
@@ -126,12 +123,9 @@ selected_region = st.selectbox("Filter by Region", ["All"]+list(regions))
 selected_industry = st.selectbox("Filter by Industry", ["All"]+list(industries))
 
 df_filtered = df.copy()
-if selected_segment != "All":
-    df_filtered = df_filtered[df_filtered["segment"]==selected_segment]
-if selected_region != "All":
-    df_filtered = df_filtered[df_filtered["region"]==selected_region]
-if selected_industry != "All":
-    df_filtered = df_filtered[df_filtered["industry"]==selected_industry]
+if selected_segment != "All": df_filtered = df_filtered[df_filtered["segment"]==selected_segment]
+if selected_region != "All": df_filtered = df_filtered[df_filtered["region"]==selected_region]
+if selected_industry != "All": df_filtered = df_filtered[df_filtered["industry"]==selected_industry]
 
 df_sorted = df_filtered.sort_values(by="priority_score", ascending=False)
 
@@ -153,16 +147,43 @@ st.markdown("---")
 # -----------------------------
 st.subheader("📈 Portfolio Overview")
 st.dataframe(df_sorted[[
-    "account_name",
-    "segment",
-    "region",
-    "industry",
-    "priority_score",
-    "priority_score_norm",
-    "risk_score",
-    "growth_score",
-    "attention_score"
+    "account_name","segment","region","industry","priority_score","priority_score_norm",
+    "risk_score","growth_score","attention_score"
 ]], use_container_width=True)
+
+# -----------------------------
+# BCG-style Quadrant Heatmap
+# -----------------------------
+st.subheader("📊 Account Heatmap (BCG-style)")
+
+max_growth = df_sorted["growth_score"].max()
+max_risk = df_sorted["risk_score"].max()
+
+quadrant_labels = ["Stable Growth", "Accounts Under Threat", "Emerging", "Less Focus"]
+
+heatmap_cols = st.columns(2)
+with heatmap_cols[0]:
+    for _, row in df_sorted.iterrows():
+        x = row["growth_score"] / max_growth
+        y = row["risk_score"] / max_risk
+        size = max(5, row.get("arr_gbp", 1)/1e5)  # circle proportional to ARR
+        color_score = row["priority_score_norm"]/100
+        # Determine quadrant
+        quadrant = ""
+        if x>0.5 and y>0.5: quadrant = "Stable Growth"
+        elif x<=0.5 and y>0.5: quadrant = "Accounts Under Threat"
+        elif x>0.5 and y<=0.5: quadrant = "Emerging"
+        else: quadrant = "Less Focus"
+        st.markdown(f"- **{row['account_name']}** | Quadrant: {quadrant} | ARR: {row.get('arr_gbp',0):,.0f} | Priority (norm): {row['priority_score_norm']:.1f}")
+
+with heatmap_cols[1]:
+    st.markdown("**Quadrant Legend:**")
+    st.markdown("""
+    - **Stable Growth:** High growth, high risk (focus, expand)  
+    - **Accounts Under Threat:** Low growth, high risk (intervene)  
+    - **Emerging:** High growth, low risk (invest)  
+    - **Less Focus:** Low growth, low risk (monitor)
+    """)
 
 # -----------------------------
 # Drill Down Section
@@ -195,19 +216,9 @@ if not account_row.empty:
     st.subheader("🧠 Supporting Evidence")
     with st.expander("View reasoning and supporting metrics"):
         metrics_list = [
-            "revenue_trend",
-            "usage_trend",
-            "open_tickets_count",
-            "sla_breaches_90d",
-            "latest_nps",
-            "expansion_pipeline_gbp",
-            "seats_used",
-            "positive_sales_signal",
-            "days_since_last_contact",
-            "arr_gbp",
-            "recent_support_summary",
-            "recent_customer_note",
-            "recent_sales_note"
+            "revenue_trend","usage_trend","open_tickets_count","sla_breaches_90d","latest_nps",
+            "expansion_pipeline_gbp","seats_used","positive_sales_signal","days_since_last_contact",
+            "arr_gbp","recent_support_summary","recent_customer_note","recent_sales_note"
         ]
         evidence_data = {
             "Metric": [m.replace("_"," ").title() for m in metrics_list],
