@@ -101,15 +101,16 @@ if col_to_sort not in df.columns:
         raise KeyError(f"Column '{col_to_sort}' not found and no similar columns available. Available columns: {list(df.columns)}")
 
 # Now it's safe to sort
-df_sorted = df.sort_values(by=col_to_sort, ascending=False)
+def calculate_priority(df, col_to_sort="priority_score"):
+    df["priority_score"] = (
+        df["metric1"] * 0.5 +
+        df["metric2"] * 0.5 +
+        df["attention_score"] * 0.2
+    )
 
-  df["priority_score"] = (
-    df["metric1"] * 0.5 +
-    df["metric2"] * 0.5 +
-    df["attention_score"] * 0.2
-)
+    df_sorted = df.sort_values(by=col_to_sort, ascending=False)
 
-    return df
+    return df_sorted
 
 df = compute_scores(df)
 
