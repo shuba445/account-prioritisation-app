@@ -1,37 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-
-# Optional: AI
-USE_AI = False
-try:
-    from openai import OpenAI
-    client = OpenAI()
-    USE_AI = True
-except:
-    pass
-
-# -----------------------------
-# 🔐 Simple Authentication
-# -----------------------------
-def login():
-    st.title("🔐 Account Prioritisation Tool")
-
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-        if username == "admin" and password == "demo":
-            st.session_state["logged_in"] = True
-        else:
-            st.error("Invalid credentials")
-
-if "logged_in" not in st.session_state:
-    st.session_state["logged_in"] = False
-
-if not st.session_state["logged_in"]:
-    login()
-    st.stop()
+import difflib
 
 # -----------------------------
 # 📂 Load Data
@@ -43,6 +13,7 @@ def load_data():
 
 df = load_data()
 st.write(df.columns)
+
 # -----------------------------
 # 🧮 Feature Engineering
 # -----------------------------
@@ -55,16 +26,18 @@ def compute_scores(df):
     def safe_col(df, col):
         return df[col] if col in df.columns else 0
 
+    # Revenue trend
     df["revenue_trend"] = (
         (safe_col(df, "mrr_current_gbp") - safe_col(df, "mrr_3_months_ago_gbp")) /
         (safe_col(df, "mrr_3_months_ago_gbp") + 1)
     )
 
-    return df
-    df["usage_trend"] = (df["usage_current"] - df["usage_previous"]) / (df["usage_previous"] + 1)
+    # Usage trend
+    df["usage_trend"] = (safe_col(df, "usage_current") - safe_col(df, "usage_previous")) / (safe_col(df, "usage_previous") + 1)
 
-    df["support_score"] = normalize(df["open_tickets"] + df["sla_breaches"] * 2)
-    df["nps_score"] = 1 - normalize(df["nps"])  # lower NPS = higher risk
+    # Support & NPS
+    df["support_score"] = normalize(safe_col(df, "open_tickets") + safe_col(df, "sla_breaches") * 2)
+    df["nps_score"] = 1 - normalize(safe_col(df, "nps"))  # lower NPS = higher risk
 
     # 🔴 Risk
     df["risk_score"] = (
@@ -76,150 +49,50 @@ def compute_scores(df):
 
     # 🚀 Growth
     df["growth_score"] = (
-        normalize(df["expansion_pipeline"]) * 0.4 +
-        normalize(df["seat_utilisation"]) * 0.2 +
+        normalize(safe_col(df, "expansion_pipeline")) * 0.4 +
+        normalize(safe_col(df, "seat_utilisation")) * 0.2 +
         normalize(df["usage_trend"]) * 0.2 +
-        normalize(df["positive_sales_signal"]) * 0.2
+        normalize(safe_col(df, "positive_sales_signal")) * 0.2
     ) * 100
 
     # ⚠️ Attention
     df["attention_score"] = (
-        normalize(df["arr"]) * 0.4 +
-        normalize(df["days_since_last_contact"]) * 0.3 +
+        normalize(safe_col(df, "arr")) * 0.4 +
+        normalize(safe_col(df, "days_since_last_contact")) * 0.3 +
         df["support_score"] * 0.3
     ) * 100
 
-    # 🧩 Final Priority
-    # Check if the column exists
-if col_to_sort not in df.columns:
-    # Try to find the closest matching column
-    matches = difflib.get_close_matches(col_to_sort, df.columns, n=1, cutoff=0.6)
-    if matches:
-        print(f"Column '{col_to_sort}' not found. Using '{matches[0]}' instead.")
-        df = df.rename(columns={matches[0]: col_to_sort})
-    else:
-        raise KeyError(f"Column '{col_to_sort}' not found and no similar columns available. Available columns: {list(df.columns)}")
-
-# Now it's safe to sort
-def calculate_priority(df, col_to_sort="priority_score"):
-    df["priority_score"] = (
-        df["metric1"] * 0.5 +
-        df["metric2"] * 0.5 +
-        df["attention_score"] * 0.2
-    )
-
-    df_sorted = df.sort_values(by=col_to_sort, ascending=False)
-
-    return df_sorted
+    return df
 
 df = compute_scores(df)
 
 # -----------------------------
-# 🤖 AI Explanation (Optional)
+# 🧩 Final Priority Score
 # -----------------------------
-def generate_ai_summary(row):
-    if not USE_AI:
-        return "AI disabled"
+# Define column to sort
+col_to_sort = "priority_score"
 
-    prompt = f"""
-    Account: {row['account_name']}
-    ARR: {row['arr']}
-    Risk Score: {row['risk_score']:.1f}
-    Growth Score: {row['growth_score']:.1f}
+# Create dummy metrics if they don't exist
+if "metric1" not in df.columns:
+    df["metric1"] = df["risk_score"]
+if "metric2" not in df.columns:
+    df["metric2"] = df["growth_score"]
 
-    Notes: {row['notes']}
-
-    Explain:
-    1. Why this account is prioritised
-    2. Recommended actions
-    """
-
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}]
-    )
-
-    return response.choices[0].message.content
-
-# -----------------------------
-# 📊 Portfolio View
-# -----------------------------
-st.title("📊 Account Prioritisation Dashboard")
-
-df_sorted = df.sort_values(by="priority_score", ascending=False)
-
-st.subheader("Top Accounts to Focus On")
-
-st.dataframe(
-    df_sorted[[
-        "account_name",
-        "priority_score",
-        "risk_score",
-        "growth_score",
-        "attention_score"
-    ]].head(20),
-    use_container_width=True
+# Calculate priority score
+df["priority_score"] = (
+    df["metric1"] * 0.5 +
+    df["metric2"] * 0.5 +
+    df["attention_score"] * 0.2
 )
 
-# -----------------------------
-# 🔍 Drill Down
-# -----------------------------
-selected_account = st.selectbox(
-    "Select Account",
-    df_sorted["account_name"]
-)
+# Check for typos in col_to_sort
+if col_to_sort not in df.columns:
+    matches = difflib.get_close_matches(col_to_sort, df.columns, n=1, cutoff=0.6)
+    if matches:
+        st.warning(f"Column '{col_to_sort}' not found. Using '{matches[0]}' instead.")
+        df = df.rename(columns={matches[0]: col_to_sort})
+    else:
+        raise KeyError(f"Column '{col_to_sort}' not found. Available columns: {list(df.columns)}")
 
-account = df[df["account_name"] == selected_account].iloc[0]
-
-st.markdown("---")
-st.subheader(f"📌 {selected_account}")
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Risk", f"{account['risk_score']:.1f}")
-col2.metric("Growth", f"{account['growth_score']:.1f}")
-col3.metric("Attention", f"{account['attention_score']:.1f}")
-
-st.metric("Priority Score", f"{account['priority_score']:.1f}")
-
-# -----------------------------
-# 🧠 Explanation
-# -----------------------------
-st.subheader("🧠 Why this account?")
-
-st.write(f"""
-- Revenue trend: {account['revenue_trend']:.2f}
-- Usage trend: {account['usage_trend']:.2f}
-- Open tickets: {account['open_tickets']}
-- NPS: {account['nps']}
-""")
-
-# -----------------------------
-# 🤖 AI Insights
-# -----------------------------
-if st.button("Generate AI Insights"):
-    with st.spinner("Thinking..."):
-        insight = generate_ai_summary(account)
-        st.write(insight)
-
-# -----------------------------
-# ✅ Actions
-# -----------------------------
-st.subheader("✅ Recommended Actions")
-
-actions = []
-
-if account["risk_score"] > 60:
-    actions.append("🚨 Immediate customer outreach")
-
-if account["support_score"] > 0.5:
-    actions.append("🛠 Resolve support issues")
-
-if account["growth_score"] > 50:
-    actions.append("📈 Explore upsell opportunity")
-
-if not actions:
-    actions.append("👀 Monitor account")
-
-for a in actions:
-    st.write(f"- {a}")
+# Sort by priority
+df_sorted = df.sort_values(by=col_to_sort, ascending=False)
