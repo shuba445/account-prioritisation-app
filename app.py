@@ -4,17 +4,8 @@ import numpy as np
 import difflib
 import os
 
-# Optional: AI Sentiment Analysis
-USE_AI = False
-try:
-    from openai import OpenAI
-    client = OpenAI()
-    USE_AI = True
-except:
-    pass
-
 # -----------------------------
-# 🔐 Authentication
+# 🔐 Simple Authentication
 # -----------------------------
 def login():
     st.title("🔐 Account Prioritisation Tool")
@@ -42,6 +33,7 @@ def load_data():
     return df
 
 df = load_data()
+st.write("Columns detected in dataset:", df.columns.tolist())
 
 # -----------------------------
 # Helper: get column with fallback
@@ -86,17 +78,17 @@ def compute_scores(df):
     # Growth Score
     df["growth_score"] = (
         normalize(get_column(df,"expansion_pipeline_gbp"))*0.4 +
-        normalize(get_column(df,"seats_used")/get_column(df,"seats_purchased"))*0.2 +
+        normalize(get_column(df,"seats_used")/get_column(df,"seats_purchased").replace(0,1))*0.2 +
         normalize(df["usage_trend"])*0.2 +
-        normalize(get_column(df,"open_leads_count"))*0.2
+        normalize(get_column(df,"avg_lead_score"))*0.2
     ) * 100
 
-   # Engagement / Attention Score
+    # Engagement / Attention Score
     days_since_last_note = (pd.to_datetime("today") - pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')).dt.days.fillna(0)
     df["attention_score"] = (
-    normalize(get_column(df,"arr_gbp"))*0.4 +
-    normalize(days_since_last_note)*0.3 +
-    df["support_score"]*0.3
+        normalize(get_column(df,"arr_gbp"))*0.4 +
+        normalize(days_since_last_note)*0.3 +
+        df["support_score"]*0.3
     ) * 100
 
     # Priority Score
@@ -104,35 +96,11 @@ def compute_scores(df):
     df["metric2"] = df.get("growth_score",0)
     df["priority_score"] = df["metric1"]*0.5 + df["metric2"]*0.5 + df.get("attention_score",0)*0.2
 
-    # Normalized score for overview
-    df["priority_norm"] = normalize(df["priority_score"])*100
-
-    # AI Sentiment Score (0-1, 1 = positive)
-    if USE_AI:
-        sentiments = []
-        for i, row in df.iterrows():
-            notes = " ".join([str(row.get(c,"")) for c in ["recent_support_summary","recent_customer_note","recent_sales_note"]])
-            if notes.strip()=="":
-                sentiments.append(0.5)
-                continue
-            prompt = f"Analyze the sentiment of this customer notes and give a score between 0 (negative) to 1 (positive):\n{notes}"
-            try:
-                response = client.chat.completions.create(
-                    model="gpt-4.1-mini",
-                    messages=[{"role":"user","content":prompt}]
-                )
-                score_text = response.choices[0].message.content
-                try:
-                    score = float(score_text.strip())
-                    score = min(max(score,0),1)
-                except:
-                    score = 0.5
-                sentiments.append(score)
-            except:
-                sentiments.append(0.5)
-        df["sentiment_score"] = sentiments
-    else:
-        df["sentiment_score"] = 0.5  # neutral default
+    # Normalized scores for overview
+    df["risk_norm"] = normalize(df["risk_score"])
+    df["growth_norm"] = normalize(df["growth_score"])
+    df["attention_norm"] = normalize(df["attention_score"])
+    df["priority_norm"] = normalize(df["priority_score"])
 
     return df
 
@@ -141,56 +109,89 @@ df = compute_scores(df)
 # -----------------------------
 # Filters
 # -----------------------------
-st.set_page_config(page_title="Account Prioritisation", layout="wide")
 st.sidebar.header("Filters")
-segments = st.sidebar.multiselect("Select Segment", df["segment"].unique(), default=df["segment"].unique())
-regions = st.sidebar.multiselect("Select Region", df["region"].unique(), default=df["region"].unique())
-industries = st.sidebar.multiselect("Select Industry", df["industry"].unique(), default=df["industry"].unique())
+segment_options = ["All"] + sorted(df["segment"].dropna().unique().tolist())
+industry_options = ["All"] + sorted(df["industry"].dropna().unique().tolist())
 
-df_filtered = df[df["segment"].isin(segments) & df["region"].isin(regions) & df["industry"].isin(industries)]
+selected_segment = st.sidebar.selectbox("Segment", segment_options)
+selected_industry = st.sidebar.selectbox("Industry", industry_options)
+
+df_filtered = df.copy()
+if selected_segment != "All":
+    df_filtered = df_filtered[df_filtered["segment"]==selected_segment]
+if selected_industry != "All":
+    df_filtered = df_filtered[df_filtered["industry"]==selected_industry]
+
 df_sorted = df_filtered.sort_values(by="priority_score", ascending=False)
 
 # -----------------------------
-# Top Accounts Summary
+# Streamlit UI
 # -----------------------------
+st.set_page_config(page_title="Account Prioritisation", layout="wide")
 st.title("📊 Account Prioritisation Dashboard")
+
+# Top 3 Accounts Blocks
 st.subheader("🏆 Top Accounts by Priority")
-top_accounts = df_sorted.head(5)
-cols = st.columns(5)
+top_accounts = df_sorted.head(3)
+cols = st.columns(3)
 for i, (_, acc) in enumerate(top_accounts.iterrows()):
     with cols[i]:
-        st.metric(acc.get("account_name","N/A"), f"{acc.get('priority_norm',0):.1f}")
-        st.progress(min(acc.get("priority_norm",0)/100, 1.0))
+        st.metric(label=acc.get("account_name","N/A"), value=f"{acc.get('priority_score',0):.1f}")
+        st.progress(min(acc.get('priority_norm',0),1.0))
 
 st.markdown("---")
 
 # -----------------------------
-# Portfolio Table
+# Quadrant Bubble Chart (Native)
 # -----------------------------
-st.subheader("📈 Portfolio Overview")
-st.dataframe(df_sorted[[
-    "account_name","segment","region","industry","priority_score","risk_score","growth_score","attention_score","priority_norm"
-]], use_container_width=True)
+st.subheader("💠 Account Quadrant Overview")
+st.write("Quadrants: High Growth / Low Growth vs High Risk / Low Risk")
+st.write("Bubble size indicates Priority, color indicates Engagement")
 
-# -----------------------------
-# Quadrant Chart (native Streamlit)
-# -----------------------------
-st.subheader("🔲 Account Priority Quadrants")
+# Prepare positions
+def quadrant_position(row):
+    # x = Growth normalized
+    # y = Risk normalized
+    return row["growth_norm"], row["risk_norm"]
 
-def quadrant_category(row):
-    if row["risk_score"]>50 and row["growth_score"]>50: return "Emerging"
-    if row["risk_score"]>50 and row["growth_score"]<=50: return "Needs Attention"
-    if row["risk_score"]<=50 and row["growth_score"]>50: return "Stable Growth"
-    return "Less Focus"
+x_positions = df_sorted.apply(lambda r: quadrant_position(r)[0], axis=1)
+y_positions = df_sorted.apply(lambda r: quadrant_position(r)[1], axis=1)
+bubble_sizes = df_sorted["priority_norm"]*100  # scaled for display
+bubble_colors = df_sorted["attention_norm"]
 
-quad_colors = {"Emerging":"#2ca02c","Needs Attention":"#d62728","Stable Growth":"#1f77b4","Less Focus":"#ff7f0e"}
+# Native plotting using Streamlit markdown + HTML for bubble representation
+st.write("**Quadrant Bubble Visualization**")
+max_x = 1
+max_y = 1
+chart_height = 400
+chart_width = 600
 
-for category in ["Emerging","Needs Attention","Stable Growth","Less Focus"]:
-    st.markdown(f"### {category}")
-    sub_df = df_sorted[df_sorted.apply(quadrant_category, axis=1)==category].head(3)
-    if not sub_df.empty:
-        for _, acc in sub_df.iterrows():
-            st.write(f"**{acc['account_name']}** | Priority: {acc['priority_norm']:.1f} | Growth: {acc['growth_score']:.1f} | Risk: {acc['risk_score']:.1f} | Engagement: {acc['attention_score']:.1f}")
+st.write(
+    f"""
+    <div style="position: relative; width:{chart_width}px; height:{chart_height}px; border:1px solid #ccc;">
+    """
+    , unsafe_allow_html=True
+)
+
+for idx, row in df_sorted.iterrows():
+    x = row["growth_norm"]
+    y = row["risk_norm"]
+    size = max(10, row["priority_norm"]*50)  # min size
+    color_val = int(255*(1-row["attention_norm"]))
+    color = f"rgb({color_val},{255-color_val},{100})"
+    left = int(x*chart_width) - int(size/2)
+    top = int((1-y)*chart_height) - int(size/2)
+    st.write(
+        f"""
+        <div title="{row['account_name']} - Priority: {row['priority_score']:.1f}" 
+        style="position:absolute; left:{left}px; top:{top}px; width:{size}px; height:{size}px; 
+        background-color:{color}; border-radius:50%; border:1px solid #444;">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+st.markdown("---")
 
 # -----------------------------
 # Drill Down Section
@@ -202,47 +203,62 @@ account_row = df_sorted[df_sorted["account_name"]==selected_account]
 if not account_row.empty:
     account = account_row.iloc[0]
 
-    # Metrics
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Priority", f"{account['priority_norm']:.1f}")
-    col2.metric("Risk", f"{account['risk_score']:.1f}")
-    col3.metric("Growth", f"{account['growth_score']:.1f}")
-    col4.metric("Engagement", f"{account['attention_score']:.1f}")
-
-    # Executive Overview
-    st.subheader("🗂 Account Overview")
-    overview_cols = ["segment","region","industry","account_status","lifecycle_stage","account_owner","support_tier","contract_start_date","renewal_date","arr_gbp","seats_purchased","seats_used","latest_nps","expansion_pipeline_gbp","contraction_risk_gbp","last_qbr_date","latest_note_date","note_sentiment_hint"]
+    # Executive overview
+    st.markdown(f"### Account Overview: {account['account_name']}")
+    overview_cols = ["region","segment","industry","account_status","lifecycle_stage","account_owner",
+                     "support_tier","contract_start_date","renewal_date","arr_gbp","seats_purchased",
+                     "seats_used","latest_nps","expansion_pipeline_gbp","contraction_risk_gbp",
+                     "last_qbr_date","latest_note_date"]
     overview_data = {col: account.get(col,"N/A") for col in overview_cols}
-    st.table(pd.DataFrame(list(overview_data.items()), columns=["Attribute","Value"]))
+    st.table(pd.DataFrame(list(overview_data.items()), columns=["Field","Value"]))
+
+    # Metrics display
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Priority", f"{round(account.get('priority_score',0))}")
+    col2.metric("Risk", f"{round(account.get('risk_score',0))}")
+    col3.metric("Growth", f"{round(account.get('growth_score',0))}")
+    col4.metric("Engagement", f"{round(account.get('attention_score',0))}")
 
     # Supporting Evidence Table
     st.subheader("🧠 Supporting Evidence")
-    metrics_list = ["revenue_trend","usage_trend","open_tickets_count","sla_breaches_90d","latest_nps","expansion_pipeline_gbp","seats_used","open_leads_count","days_since_last_contact","arr_gbp"]
-    evidence_data = {"Metric":[m.replace("_"," ").title() for m in metrics_list],"Value":[round(account.get(m,0),2) for m in metrics_list]}
-    st.table(pd.DataFrame(evidence_data))
+    with st.expander("View reasoning and supporting metrics"):
+        metrics_list = [
+            "revenue_trend","usage_trend","open_tickets_count","sla_breaches_90d","latest_nps",
+            "expansion_pipeline_gbp","seats_used","avg_lead_score","days_since_last_note","arr_gbp"
+        ]
+        evidence_data = {
+            "Metric": [m.replace("_"," ").title() for m in metrics_list],
+            "Value": [round(account.get(m,0),2) for m in metrics_list]
+        }
+        st.table(pd.DataFrame(evidence_data))
 
     # Recommended Actions
     st.subheader("✅ Recommended Actions")
-    actions=[]
-    if account["risk_score"]>60: actions.append("🚨 Immediate customer outreach")
-    if account["support_score"]>0.5: actions.append("🛠 Resolve support issues")
-    if account["growth_score"]>50: actions.append("📈 Explore upsell opportunities")
+    actions = []
+    if account.get("risk_score",0) > 60: actions.append("🚨 Immediate customer outreach")
+    if account.get("support_score",0) > 0.5: actions.append("🛠 Resolve support issues")
+    if account.get("growth_score",0) > 50: actions.append("📈 Explore upsell opportunities")
     if not actions: actions.append("👀 Monitor account")
-    for a in actions: st.write(f"- {a}")
 
-    # Notes
+    for a in actions:
+        st.write(f"- {a}")
+
+    # Save / Record Decisions
     st.subheader("💾 Record Your Decision / Notes")
     notes_key = f"notes_{selected_account}"
     notes = st.text_area("Add your notes or decisions for this account", key=notes_key)
     if st.button("Save Notes"):
-        file_name="account_notes.csv"
-        if os.path.exists(file_name): notes_df = pd.read_csv(file_name)
-        else: notes_df = pd.DataFrame(columns=["account_name","notes"])
-        if selected_account in notes_df["account_name"].values:
-            notes_df.loc[notes_df["account_name"]==selected_account,"notes"] = notes
+        file_name = "account_notes.csv"
+        if os.path.exists(file_name):
+            notes_df = pd.read_csv(file_name)
         else:
-            notes_df=pd.concat([notes_df,pd.DataFrame([{"account_name":selected_account,"notes":notes}])],ignore_index=True)
-        notes_df.to_csv(file_name,index=False)
+            notes_df = pd.DataFrame(columns=["account_name", "notes"])
+        if selected_account in notes_df["account_name"].values:
+            notes_df.loc[notes_df["account_name"]==selected_account, "notes"] = notes
+        else:
+            notes_df = pd.concat([notes_df, pd.DataFrame([{"account_name": selected_account,"notes": notes}])], ignore_index=True)
+        notes_df.to_csv(file_name, index=False)
         st.success("Notes saved successfully!")
+
 else:
     st.warning(f"No data found for account '{selected_account}'.")
