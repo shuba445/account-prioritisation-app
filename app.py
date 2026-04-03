@@ -65,6 +65,12 @@ def compute_scores(df):
     df["support_score"] = normalize(get_column(df,"open_tickets_count") + get_column(df,"sla_breaches_90d")*2)
     df["nps_score"] = 1 - normalize(get_column(df,"latest_nps"))
 
+    # Attention / Engagement Score
+    # Compute days since last note as numeric
+    last_note_delta = pd.to_datetime("today") - pd.to_datetime(get_column(df, "latest_note_date"), errors='coerce')
+    days_since_last_note = last_note_delta.dt.days.fillna(0)  # convert Timedelta to numeric days
+    days_since_last_note_norm = normalize(days_since_last_note)  # normalize numeric series
+    
     # Risk Score
     df["risk_score"] = (
         normalize(-df["revenue_trend"])*0.25 +
