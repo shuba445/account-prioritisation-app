@@ -36,6 +36,22 @@ df = load_data()
 st.write("Columns detected in dataset:", df.columns.tolist())
 
 # -----------------------------
+# Helper: map similar columns
+# -----------------------------
+def get_column(df, expected_col):
+    if expected_col in df.columns:
+        return df[expected_col]
+    else:
+        # Find closest matching column
+        matches = difflib.get_close_matches(expected_col, df.columns, n=1, cutoff=0.6)
+        if matches:
+            st.warning(f"Column '{expected_col}' not found. Using '{matches[0]}' instead.")
+            return df[matches[0]]
+        else:
+            st.warning(f"Column '{expected_col}' not found. Using default 0.")
+            return pd.Series(0, index=df.index)
+
+# -----------------------------
 # 🧮 Feature Engineering
 # -----------------------------
 def normalize(series):
@@ -44,26 +60,41 @@ def normalize(series):
 def compute_scores(df):
     df = df.copy()
 
-    def safe_col(df, col):
-        return df[col] if col in df.columns else pd.Series(0, index=df.index)
+    # Revenue & usage trends
+    df["revenue_trend"] = (get_column(df,"mrr_current_gbp") - get_column(df,"mrr_3_months_ago_gbp")) / (get_column(df,"mrr_3_months_ago_gbp")+1)
+    df["usage_trend"] = (get_column(df,"usage_current") - get_column(df,"usage_previous")) / (get_column(df,"usage_previous")+1)
 
-    # Revenue trend
-    df["revenue_trend"] = (safe_col(df,"mrr_current_gbp") - safe_col(df,"mrr_3_months_ago_gbp")) / (safe_col(df,"mrr_3_months_ago_gbp")+1)
-    # Usage trend
-    df["usage_trend"] = (safe_col(df,"usage_current") - safe_col(df,"usage_previous")) / (safe_col(df,"usage_previous")+1)
     # Support & NPS
-    df["support_score"] = normalize(safe_col(df,"open_tickets") + safe_col(df,"sla_breaches")*2)
-    df["nps_score"] = 1 - normalize(safe_col(df,"nps"))
-    # Risk
-    df["risk_score"] = (normalize(-df["revenue_trend"])*0.25 + normalize(-df["usage_trend"])*0.25 + df["support_score"]*0.25 + df["nps_score"]*0.25)*100
-    # Growth
-    df["growth_score"] = (normalize(safe_col(df,"expansion_pipeline"))*0.4 + normalize(safe_col(df,"seat_utilisation"))*0.2 + normalize(df["usage_trend"])*0.2 + normalize(safe_col(df,"positive_sales_signal"))*0.2)*100
-    # Attention
-    df["attention_score"] = (normalize(safe_col(df,"arr"))*0.4 + normalize(safe_col(df,"days_since_last_contact"))*0.3 + df["support_score"]*0.3)*100
-    # Priority
-    df["metric1"] = df.get("risk_score", 0)
-    df["metric2"] = df.get("growth_score", 0)
-    df["priority_score"] = df["metric1"]*0.5 + df["metric2"]*0.5 + df.get("attention_score", 0)*0.2
+    df["support_score"] = normalize(get_column(df,"open_tickets") + get_column(df,"sla_breaches")*2)
+    df["nps_score"] = 1 - normalize(get_column(df,"nps"))
+
+    # Risk Score
+    df["risk_score"] = (
+        normalize(-df["revenue_trend"])*0.25 +
+        normalize(-df["usage_trend"])*0.25 +
+        df["support_score"]*0.25 +
+        df["nps_score"]*0.25
+    ) * 100
+
+    # Growth Score
+    df["growth_score"] = (
+        normalize(get_column(df,"expansion_pipeline"))*0.4 +
+        normalize(get_column(df,"seat_utilisation"))*0.2 +
+        normalize(df["usage_trend"])*0.2 +
+        normalize(get_column(df,"positive_sales_signal"))*0.2
+    ) * 100
+
+    # Engagement / Attention Score
+    df["attention_score"] = (
+        normalize(get_column(df,"arr"))*0.4 +
+        normalize(get_column(df,"days_since_last_contact"))*0.3 +
+        df["support_score"]*0.3
+    ) * 100
+
+    # Priority Score
+    df["metric1"] = df.get("risk_score",0)
+    df["metric2"] = df.get("growth_score",0)
+    df["priority_score"] = df["metric1"]*0.5 + df["metric2"]*0.5 + df.get("attention_score",0)*0.2
 
     return df
 
@@ -109,7 +140,7 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("Priority", f"{account.get('priority_score',0):.1f}")
 col2.metric("Risk", f"{account.get('risk_score',0):.1f}")
 col3.metric("Growth", f"{account.get('growth_score',0):.1f}")
-col4.metric("Attention", f"{account.get('attention_score',0):.1f}")
+col4.metric("Engagement", f"{account.get('attention_score',0):.1f}")
 
 # Reasoning / Evidence
 st.subheader("🧠 Supporting Evidence")
@@ -143,7 +174,6 @@ st.subheader("💾 Record Your Decision / Notes")
 notes_key = f"notes_{selected_account}"
 notes = st.text_area("Add your notes or decisions for this account", key=notes_key)
 if st.button("Save Notes"):
-    # Save to a local CSV file
     file_name = "account_notes.csv"
     if os.path.exists(file_name):
         notes_df = pd.read_csv(file_name)
