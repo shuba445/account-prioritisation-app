@@ -91,11 +91,12 @@ def compute_scores(df):
         normalize(get_column(df,"open_leads_count"))*0.2
     ) * 100
 
-    # Engagement Score
+   # Engagement / Attention Score
+    days_since_last_note = (pd.to_datetime("today") - pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')).dt.days.fillna(0)
     df["attention_score"] = (
-        normalize(get_column(df,"arr_gbp"))*0.4 +
-        normalize(pd.to_datetime("today") - pd.to_datetime(get_column(df,"latest_note_date"), errors='coerce')).dt.days.fillna(0)*0.3 +
-        df["support_score"]*0.3
+    normalize(get_column(df,"arr_gbp"))*0.4 +
+    normalize(days_since_last_note)*0.3 +
+    df["support_score"]*0.3
     ) * 100
 
     # Priority Score
