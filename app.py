@@ -103,11 +103,11 @@ if col_to_sort not in df.columns:
 # Now it's safe to sort
 df_sorted = df.sort_values(by=col_to_sort, ascending=False)
 
-    df["priority_score"] = (
-        df["risk_score"] * 0.5 +
-        df["growth_score"] * 0.3 +
-        df["attention_score"] * 0.2
-    )
+  df["priority_score"] = (
+    df["metric1"] * 0.5 +
+    df["metric2"] * 0.5 +
+    df["attention_score"] * 0.2
+)
 
     return df
 
