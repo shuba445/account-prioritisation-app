@@ -139,29 +139,46 @@ for score, desc in score_explanations.items():
     st.write(f"**{score.replace('_',' ').title()}**: {desc}")
 
 # -----------------------------
-# BCG-style Heatmap (Streamlit-native)
+# BCG-style Heatmap (Native Streamlit)
 # -----------------------------
 st.subheader("📊 Account Heatmap (BCG-style)")
-st.write("X-axis: Growth Score | Y-axis: Risk Score (higher = riskier)")
 
-# Divide accounts into quadrants
 growth_mid = df_filtered["growth_score"].median()
 risk_mid = df_filtered["risk_score"].median()
 
-# Create a simple heatmap using columns
-for quadrant_name, condition in [
-    ("Emerging", (df_filtered["growth_score"]>=growth_mid) & (df_filtered["risk_score"]<risk_mid)),
-    ("Stable Growth", (df_filtered["growth_score"]>=growth_mid) & (df_filtered["risk_score"]>=risk_mid)),
-    ("Under Threat", (df_filtered["growth_score"]<growth_mid) & (df_filtered["risk_score"]>=risk_mid)),
-    ("Less Focus / Drop", (df_filtered["growth_score"]<growth_mid) & (df_filtered["risk_score"]<risk_mid))
-]:
+quadrants = {
+    "Emerging": (df_filtered["growth_score"]>=growth_mid) & (df_filtered["risk_score"]<risk_mid),
+    "Stable Growth": (df_filtered["growth_score"]>=growth_mid) & (df_filtered["risk_score"]>=risk_mid),
+    "Under Threat": (df_filtered["growth_score"]<growth_mid) & (df_filtered["risk_score"]>=risk_mid),
+    "Less Focus / Drop": (df_filtered["growth_score"]<growth_mid) & (df_filtered["risk_score"]<risk_mid)
+}
+
+# Color code for quadrants
+quad_colors = {
+    "Emerging": "#FFA500",        # Orange
+    "Stable Growth": "#00CC96",   # Green
+    "Under Threat": "#FF4C4C",    # Red
+    "Less Focus / Drop": "#A9A9A9" # Grey
+}
+
+for quadrant_name, condition in quadrants.items():
     accounts_in_quad = df_filtered[condition]
-    st.markdown(f"**{quadrant_name} Accounts ({len(accounts_in_quad)})**")
+    st.markdown(f"### {quadrant_name} Accounts ({len(accounts_in_quad)})")
     if not accounts_in_quad.empty:
         cols = st.columns(min(4,len(accounts_in_quad)))
         for i, (_, acc) in enumerate(accounts_in_quad.iterrows()):
             with cols[i % 4]:
-                st.metric(label=acc["account_name"], value=f"P: {acc['priority_score']:.1f}")
+                # Circle size proportional to priority_score
+                size = max(30, min(100, acc["priority_score"]))
+                color = quad_colors[quadrant_name]
+                st.markdown(f"""
+                    <div style='text-align:center;'>
+                        <div style='width:{size}px;height:{size}px;background-color:{color};
+                        border-radius:50%;display:inline-block;margin:5px;'></div>
+                        <div>{acc['account_name']}</div>
+                        <div>P:{acc['priority_score']:.1f}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
     else:
         st.write("No accounts in this quadrant.")
 
