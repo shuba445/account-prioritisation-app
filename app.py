@@ -61,9 +61,9 @@ def compute_scores(df):
     # Attention
     df["attention_score"] = (normalize(safe_col(df,"arr"))*0.4 + normalize(safe_col(df,"days_since_last_contact"))*0.3 + df["support_score"]*0.3)*100
     # Priority
-    df["metric1"] = df["risk_score"]
-    df["metric2"] = df["growth_score"]
-    df["priority_score"] = df["metric1"]*0.5 + df["metric2"]*0.5 + df["attention_score"]*0.2
+    df["metric1"] = df.get("risk_score", 0)
+    df["metric2"] = df.get("growth_score", 0)
+    df["priority_score"] = df["metric1"]*0.5 + df["metric2"]*0.5 + df.get("attention_score", 0)*0.2
 
     return df
 
@@ -82,14 +82,20 @@ top_accounts = df_sorted.head(5)
 cols = st.columns(5)
 for i, (_, acc) in enumerate(top_accounts.iterrows()):
     with cols[i]:
-        st.metric(label=acc["account_name"], value=f"{acc['priority_score']:.1f}")
-        st.progress(min(acc['priority_score']/100, 1.0))
+        st.metric(label=acc.get("account_name","N/A"), value=f"{acc.get('priority_score',0):.1f}")
+        st.progress(min(acc.get('priority_score',0)/100, 1.0))
 
 st.markdown("---")
 
 # Portfolio Table
 st.subheader("📈 Portfolio Overview")
-st.dataframe(df_sorted[["account_name","priority_score","risk_score","growth_score","attention_score"]], use_container_width=True)
+st.dataframe(df_sorted[[
+    "account_name",
+    "priority_score",
+    "risk_score",
+    "growth_score",
+    "attention_score"
+]], use_container_width=True)
 
 # -----------------------------
 # Drill Down Section
@@ -100,33 +106,33 @@ account = df_sorted[df_sorted["account_name"]==selected_account].iloc[0]
 
 # Metrics display
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Priority", f"{account['priority_score']:.1f}")
-col2.metric("Risk", f"{account['risk_score']:.1f}")
-col3.metric("Growth", f"{account['growth_score']:.1f}")
-col4.metric("Attention", f"{account['attention_score']:.1f}")
+col1.metric("Priority", f"{account.get('priority_score',0):.1f}")
+col2.metric("Risk", f"{account.get('risk_score',0):.1f}")
+col3.metric("Growth", f"{account.get('growth_score',0):.1f}")
+col4.metric("Attention", f"{account.get('attention_score',0):.1f}")
 
 # Reasoning / Evidence
 st.subheader("🧠 Supporting Evidence")
 with st.expander("View reasoning and supporting metrics"):
     st.write({
-        "Revenue Trend": account["revenue_trend"],
-        "Usage Trend": account["usage_trend"],
-        "Open Tickets": account["open_tickets"],
-        "SLA Breaches": account.get("sla_breaches", 0),
-        "NPS": account["nps"],
-        "Expansion Pipeline": account.get("expansion_pipeline", 0),
-        "Seat Utilisation": account.get("seat_utilisation", 0),
-        "Positive Sales Signals": account.get("positive_sales_signal", 0),
-        "Days Since Last Contact": account.get("days_since_last_contact", 0),
-        "ARR": account.get("arr", 0)
+        "Revenue Trend": account.get("revenue_trend",0),
+        "Usage Trend": account.get("usage_trend",0),
+        "Open Tickets": account.get("open_tickets",0),
+        "SLA Breaches": account.get("sla_breaches",0),
+        "NPS": account.get("nps",0),
+        "Expansion Pipeline": account.get("expansion_pipeline",0),
+        "Seat Utilisation": account.get("seat_utilisation",0),
+        "Positive Sales Signals": account.get("positive_sales_signal",0),
+        "Days Since Last Contact": account.get("days_since_last_contact",0),
+        "ARR": account.get("arr",0)
     })
 
 # Recommended Actions
 st.subheader("✅ Recommended Actions")
 actions = []
-if account["risk_score"] > 60: actions.append("🚨 Immediate customer outreach")
-if account["support_score"] > 0.5: actions.append("🛠 Resolve support issues")
-if account["growth_score"] > 50: actions.append("📈 Explore upsell opportunities")
+if account.get("risk_score",0) > 60: actions.append("🚨 Immediate customer outreach")
+if account.get("support_score",0) > 0.5: actions.append("🛠 Resolve support issues")
+if account.get("growth_score",0) > 50: actions.append("📈 Explore upsell opportunities")
 if not actions: actions.append("👀 Monitor account")
 
 for a in actions:
