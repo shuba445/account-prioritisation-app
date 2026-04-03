@@ -90,6 +90,19 @@ def compute_scores(df):
     ) * 100
 
     # 🧩 Final Priority
+    # Check if the column exists
+if col_to_sort not in df.columns:
+    # Try to find the closest matching column
+    matches = difflib.get_close_matches(col_to_sort, df.columns, n=1, cutoff=0.6)
+    if matches:
+        print(f"Column '{col_to_sort}' not found. Using '{matches[0]}' instead.")
+        df = df.rename(columns={matches[0]: col_to_sort})
+    else:
+        raise KeyError(f"Column '{col_to_sort}' not found and no similar columns available. Available columns: {list(df.columns)}")
+
+# Now it's safe to sort
+df_sorted = df.sort_values(by=col_to_sort, ascending=False)
+
     df["priority_score"] = (
         df["risk_score"] * 0.5 +
         df["growth_score"] * 0.3 +
