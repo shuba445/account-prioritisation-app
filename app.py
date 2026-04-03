@@ -75,7 +75,7 @@ def compute_scores(df):
 
     # --- Positive sales signal ---
     df["positive_sales_signal"] = 0
-        expansion = get_column(df, "expansion_pipeline")
+        expansion = get_column(df, "expansion_pipeline_gbp")
         df.loc[expansion > 0, "positive_sales_signal"] = 1
         df.loc[df.get("seat_utilisation", 0) > 0.8, "positive_sales_signal"] = 1
     
