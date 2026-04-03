@@ -34,7 +34,7 @@ def load_data():
 df = load_data()
 
 # -----------------------------
-# Helper functions
+# 🧠 Helpers
 # -----------------------------
 def get_column(df, col):
     if col in df.columns:
@@ -49,14 +49,14 @@ def normalize(series):
     series = pd.to_numeric(series, errors="coerce").fillna(0)
     return (series - series.min()) / (series.max() - series.min() + 1e-9)
 
-def safe_float(x):
+def safe(x):
     try:
         return float(x)
     except:
         return 0.0
 
 def r(x):
-    return round(safe_float(x), 2)
+    return round(safe(x), 2)
 
 # -----------------------------
 # 🧮 Compute Scores
@@ -139,6 +139,7 @@ region = st.selectbox("Region", ["All"] + list(df["region"].dropna().unique()))
 industry = st.selectbox("Industry", ["All"] + list(df["industry"].dropna().unique()))
 
 df_filtered = df.copy()
+
 if segment != "All":
     df_filtered = df_filtered[df_filtered["segment"] == segment]
 if region != "All":
@@ -154,65 +155,71 @@ df_sorted = df_filtered.sort_values(by="priority_score", ascending=False)
 st.subheader("📊 Portfolio Summary")
 
 col1, col2, col3 = st.columns(3)
-
 col1.metric("Avg Priority", r(df_filtered["priority_score"].mean()))
 col2.metric("Avg Normalized", r(df_filtered["priority_score_norm"].mean()))
 col3.metric("High Priority Accounts", int((df_filtered["priority_score_norm"] > 70).sum()))
 
 # -----------------------------
-# 📊 BCG MATRIX (FIXED)
+# 🏆 Top Accounts
 # -----------------------------
-st.subheader("📊 Account Heatmap (BCG Matrix)")
+st.subheader("🏆 Top Priority Accounts")
 
-width = 800
-height = 450
-padding = 40
+for _, acc in df_sorted.head(10).iterrows():
 
-st.markdown(
-    f"""<div style="position:relative;width:{width}px;height:{height}px;border:2px solid #ccc;margin:auto;background:#fafafa;">""",
-    unsafe_allow_html=True
-)
+    score = acc["priority_score_norm"]
 
-# Quadrant lines
-st.markdown(f"""
-<div style="position:absolute;left:50%;top:0;height:100%;width:2px;background:#ccc;"></div>
-<div style="position:absolute;top:50%;left:0;width:100%;height:2px;background:#ccc;"></div>
-""", unsafe_allow_html=True)
-
-for _, acc in df_filtered.iterrows():
-
-    x = safe_float(acc["growth_score"]) / 100
-    y = safe_float(acc["risk_score"]) / 100
-
-    px = padding + x * (width - 2 * padding)
-    py = padding + y * (height - 2 * padding)
-
-    size = max(12, min(int(safe_float(acc["arr_gbp"]) / 1e6), 40))
-
-    px = max(size, min(px, width - size))
-    py = max(size, min(py, height - size))
-
-    if x > 0.5 and y > 0.5:
+    if score >= 75:
         color = "#2ecc71"
-    elif x <= 0.5 and y > 0.5:
-        color = "#e74c3c"
-    elif x > 0.5 and y <= 0.5:
+        label = "🚀 High Priority"
+    elif score >= 50:
         color = "#f1c40f"
+        label = "📈 Growth Focus"
+    elif score >= 30:
+        color = "#e67e22"
+        label = "⚠️ Watchlist"
+    else:
+        color = "#95a5a6"
+        label = "❌ Low Priority"
+
+    col1, col2 = st.columns([1, 4])
+
+    with col1:
+        st.markdown(f"<div style='width:50px;height:50px;background:{color};border-radius:50%;'></div>", unsafe_allow_html=True)
+
+    with col2:
+        st.markdown(f"""
+        **{acc['account_name']}**  
+        {label}  
+        Priority: **{r(acc['priority_score'])}** | Normalized: **{r(score)}**  
+        ARR: **£{int(acc.get('arr_gbp',0))}**
+        """)
+
+# -----------------------------
+# 🔵 Bubble Portfolio View
+# -----------------------------
+st.subheader("🔵 Portfolio Bubble View")
+
+cols = st.columns(5)
+
+for i, (_, acc) in enumerate(df_sorted.head(20).iterrows()):
+
+    score = acc["priority_score_norm"]
+
+    if score >= 75:
+        color = "#2ecc71"
+    elif score >= 50:
+        color = "#f1c40f"
+    elif score >= 30:
+        color = "#e67e22"
     else:
         color = "#95a5a6"
 
-    tooltip = f"{acc['account_name']} | Priority: {r(acc['priority_score'])}"
+    size = max(40, min(int(acc.get("arr_gbp",0) / 1e6), 100))
 
-    st.markdown(
-        f"""
-        <div title="{tooltip}"
-        style="position:absolute;left:{px}px;bottom:{py}px;width:{size}px;height:{size}px;background:{color};border-radius:50%;opacity:0.7;">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-st.markdown("</div>", unsafe_allow_html=True)
+    with cols[i % 5]:
+        st.markdown(f"<div style='width:{size}px;height:{size}px;background:{color};border-radius:50%;margin:auto;'></div>", unsafe_allow_html=True)
+        st.caption(acc["account_name"])
+        st.caption(f"Score: {r(score)}")
 
 # -----------------------------
 # 🔍 Drill Down
@@ -224,10 +231,10 @@ account = df_sorted[df_sorted["account_name"] == selected_account].iloc[0]
 
 st.markdown(f"""
 ### 📌 Account Overview
-- **Region:** {account.get('region')}
-- **Segment:** {account.get('segment')}
-- **Industry:** {account.get('industry')}
-- **ARR:** £{r(account.get('arr_gbp'))}
+- Region: {account.get('region')}
+- Segment: {account.get('segment')}
+- Industry: {account.get('industry')}
+- ARR: £{r(account.get('arr_gbp'))}
 """)
 
 col1, col2, col3, col4 = st.columns(4)
@@ -236,7 +243,7 @@ col2.metric("Risk", r(account["risk_score"]))
 col3.metric("Growth", r(account["growth_score"]))
 col4.metric("Engagement", r(account["attention_score"]))
 
-# Supporting Evidence
+# Evidence
 st.subheader("🧠 Supporting Evidence")
 
 evidence = pd.DataFrame({
