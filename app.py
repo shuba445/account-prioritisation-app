@@ -119,17 +119,27 @@ if reg_filter != "All":
     df_filtered = df_filtered[df_filtered["region"]==reg_filter]
 
 # -----------------------------
-# Top Accounts Bubbles (Clickable)
+# Overview Section
 # -----------------------------
-st.subheader("🏆 Top Accounts")
-cols = st.columns(5)
-top_accounts = df_filtered.head(5)
+st.subheader("📌 Overview: Top Accounts by Category")
 
-for i, (_, acc) in enumerate(top_accounts.iterrows()):
-    with cols[i]:
-        # Bubble button using metric
-        if st.button(f"{acc['account_name']}\nPriority: {acc['priority_score']:.1f}", key=f"top_{i}"):
+# Accounts needing attention: top by priority
+attention_accounts = df_filtered.sort_values("priority_score", ascending=False).head(5)
+# Revenue at risk: top by risk_score
+risk_accounts = df_filtered.sort_values("risk_score", ascending=False).head(5)
+# Growth opportunities: top by growth_score
+growth_accounts = df_filtered.sort_values("growth_score", ascending=False).head(5)
+
+def render_account_block(df_block, title):
+    st.markdown(f"**{title}**")
+    for _, acc in df_block.iterrows():
+        if st.button(f"{acc['account_name']} | Priority: {acc['priority_score']:.1f}", key=f"{title}_{acc['account_name']}"):
             st.session_state["selected_account"] = acc["account_name"]
+
+render_account_block(attention_accounts, "Accounts Needing Attention")
+render_account_block(risk_accounts, "Accounts with Revenue at Risk")
+render_account_block(growth_accounts, "Accounts with Growth Opportunities")
+st.markdown("---")
 
 # -----------------------------
 # Default selected account
