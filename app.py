@@ -34,7 +34,7 @@ def load_data():
 df = load_data()
 
 # -----------------------------
-# Column Helper
+# Helper functions
 # -----------------------------
 def get_column(df, col):
     if col in df.columns:
@@ -44,11 +44,20 @@ def get_column(df, col):
         return df[matches[0]]
     return pd.Series(0, index=df.index)
 
-# -----------------------------
-# Normalize
-# -----------------------------
 def normalize(series):
+    series = pd.to_numeric(series, errors="coerce").fillna(0)
     return (series - series.min()) / (series.max() - series.min() + 1e-9)
+
+def safe_float(x):
+    try:
+        if pd.isna(x):
+            return 0.0
+        return float(x)
+    except:
+        return 0.0
+
+def r(x):
+    return round(safe_float(x), 2)
 
 # -----------------------------
 # Compute Scores
@@ -141,40 +150,59 @@ if industry != "All":
 df_sorted = df_filtered.sort_values(by="priority_score", ascending=False)
 
 # -----------------------------
-# BCG XY Chart (Native)
+# BCG MATRIX (FIXED + INTERACTIVE)
 # -----------------------------
 st.subheader("📊 Account Heatmap (BCG Matrix)")
 
-chart_height = 400
+st.markdown("""
+**X-axis → Growth Score**  
+**Y-axis → Risk Score**
+""")
 
 st.markdown(
-    "<div style='position:relative; height:400px; border:1px solid grey;'>",
+    "<div style='position:relative; height:450px; border:2px solid #ccc;'>",
     unsafe_allow_html=True
 )
 
+selected_from_chart = None
+
 for _, acc in df_sorted.iterrows():
 
-    x = acc["growth_score"] / 100
-    y = acc["risk_score"] / 100
+    x = safe_float(acc["growth_score"]) / 100
+    y = safe_float(acc["risk_score"]) / 100
 
-    left = int(x * 90)
-    bottom = int(y * 90)
+    left = int(max(0, min(x, 1)) * 90)
+    bottom = int(max(0, min(y, 1)) * 90)
 
-    # Determine quadrant color
+    # Quadrant color
     if x > 0.5 and y > 0.5:
-        color = "#2ecc71"  # green
+        color = "#2ecc71"
+        label = "Stable Growth"
     elif x <= 0.5 and y > 0.5:
-        color = "#e74c3c"  # red
+        color = "#e74c3c"
+        label = "At Risk"
     elif x > 0.5 and y <= 0.5:
-        color = "#f1c40f"  # yellow
+        color = "#f1c40f"
+        label = "Emerging"
     else:
-        color = "#95a5a6"  # grey
+        color = "#95a5a6"
+        label = "Low Priority"
 
-    size = max(10, min(int(acc["arr_gbp"] / 1e6), 40))
+    size = max(12, min(int(safe_float(acc["arr_gbp"]) / 1e6), 40))
+
+    tooltip = f"""
+    {acc['account_name']}
+    Priority: {r(acc['priority_score'])}
+    Growth: {r(acc['growth_score'])}
+    Risk: {r(acc['risk_score'])}
+    ARR: {int(safe_float(acc['arr_gbp']))}
+    Segment: {acc.get('segment')}
+    """
 
     st.markdown(
         f"""
-        <div title="{acc['account_name']}"
+        <div title="{tooltip}"
+        onclick="window.parent.postMessage({{'account':'{acc['account_name']}'}} , '*')"
         style="
             position:absolute;
             left:{left}%;
@@ -183,39 +211,46 @@ for _, acc in df_sorted.iterrows():
             height:{size}px;
             background:{color};
             border-radius:50%;
-            opacity:0.7;">
+            opacity:0.75;
+            cursor:pointer;">
         </div>
         """,
         unsafe_allow_html=True
     )
 
+# Axis labels
+st.markdown("""
+<div style='position:absolute; left:5px; bottom:5px;'>Low Growth</div>
+<div style='position:absolute; right:5px; bottom:5px;'>High Growth</div>
+<div style='position:absolute; left:5px; top:5px;'>High Risk</div>
+<div style='position:absolute; left:5px; bottom:50%; transform:rotate(-90deg);'>Risk ↑</div>
+""", unsafe_allow_html=True)
+
 st.markdown("</div>", unsafe_allow_html=True)
 
 # -----------------------------
-# Drill Down
+# Drill Down (Selectable)
 # -----------------------------
 st.subheader("🔍 Drill into Account")
 
-selected_account = st.selectbox("Select Account", df_sorted["account_name"])
+selected_account = st.selectbox(
+    "Select Account",
+    df_sorted["account_name"]
+)
+
 account = df_sorted[df_sorted["account_name"] == selected_account].iloc[0]
 
-def r(x):
-    return round(float(x), 2) if pd.notnull(x) else 0
-
-# Executive Summary
+# Executive Overview
 st.markdown(f"""
 ### 📌 Account Overview
-
 - **Region:** {account.get('region')}
 - **Segment:** {account.get('segment')}
 - **Industry:** {account.get('industry')}
 - **Owner:** {account.get('account_owner')}
 - **ARR:** £{r(account.get('arr_gbp'))}
-- **Seats Used:** {r(account.get('seats_used'))}/{r(account.get('seats_purchased'))}
-- **NPS:** {r(account.get('latest_nps'))}
 """)
 
-# Scores
+# Metrics
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Priority", r(account["priority_score"]))
 col2.metric("Risk", r(account["risk_score"]))
@@ -245,7 +280,6 @@ if account["risk_score"] > 60:
     actions.append("🚨 Immediate outreach")
 if account["growth_score"] > 50:
     actions.append("📈 Upsell opportunity")
-
 if not actions:
     actions.append("👀 Monitor")
 
