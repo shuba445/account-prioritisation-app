@@ -42,7 +42,7 @@ def load_data():
     return df
 
 df = load_data()
-
+st.write(df.columns)
 # -----------------------------
 # 🧮 Feature Engineering
 # -----------------------------
@@ -53,9 +53,12 @@ def compute_scores(df):
     df = df.copy()
 
     # Example assumptions (adjust to actual column names)
-    df["revenue_trend"] = (
-    (df["mrr_current_gbp"] - df["mrr_previous_gbp"]) /
-    (df["mrr_previous_gbp"] + 1)
+   def safe_col(df, col):
+    return df[col] if col in df.columns else 0
+
+df["revenue_trend"] = (
+    (safe_col(df, "mrr_current_gbp") - safe_col(df, "mrr_3_months_ago_gbp")) /
+    (safe_col(df, "mrr_3_months_ago_gbp") + 1)
 )
     df["usage_trend"] = (df["usage_current"] - df["usage_previous"]) / (df["usage_previous"] + 1)
 
